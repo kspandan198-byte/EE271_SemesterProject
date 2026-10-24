@@ -18,20 +18,17 @@ module FP16_tb;
         .acc   (acc)
     );
 
-    // Clock: 10 ns period
     initial begin
         clk = 1'b0;
         forever #5 clk = ~clk;
     end
 
     initial begin
-        // Initial values
         rst    = 1'b1;
         en     = 1'b0;
         a_fp16 = 16'h0000;
         b_fp16 = 16'h0000;
 
-        // Reset
         @(posedge clk);
         #1;
 
