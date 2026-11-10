@@ -3,7 +3,9 @@ module FP16_Multiply(
     input wire [15:0] b_fp16,
     output wire signed [7:0] normalized_exponent,
     output wire [21:0] normalized_product,
-    output wire product_sign);
+    output wire product_sign,
+    output wire [2:0] product_class
+    );
 
     localparam  [2:0] ZERO = 3'b000;
     localparam  [2:0] SUBNORMAL = 3'b001;
@@ -70,6 +72,27 @@ module FP16_Multiply(
     assign classification_a = classification(exponent_a, fraction_a);
     assign classification_b = classification(exponent_b, fraction_b);
 
+    function [2:0]product_class_type(input[2:0] class_a, input[2:0] class_b);
+        begin
+            if((class_a == NaN)||(class_b == NaN))begin
+                product_class_type = NaN;
+            end
+            else if (((class_a == INFINITY)&&(class_b ==ZERO))||
+                    ((class_b == INFINITY)&&(class_a == ZERO)))begin
+                        product_class_type = NaN;
+                    end
+            else if((class_a == ZERO) || (class_b == ZERO))begin
+                product_class_type = ZERO;
+            end
+            else if((class_a == INFINITY)||(class_b== INFINITY))begin
+                product_class_type = INFINITY;
+            end
+            else begin
+                product_class_type = NORMAL;
+            end
+        end        
+    endfunction 
+    
     //Significand
     wire [10:0] significand_a, significand_b;
     assign significand_a = get_significand(fraction_a, classification_a);
@@ -88,15 +111,30 @@ module FP16_Multiply(
         
         reg [21:0] variable_product;
         reg signed [7:0] variable_exponent;
+        integer i;
+        integer left_shifts;
         begin
-            if (raw_product[21] == 1'b1) begin
+            variable_product = raw_product;
+            variable_exponent = raw_exponent;
+            left_shifts = 0;
+            if(raw_product == 22'b0) begin
+                variable_exponent = 8'sd0;
+            end
+
+            else if (raw_product[21] == 1'b1) begin
                 variable_product = raw_product >> 1;
                 variable_exponent = raw_exponent + 8'sd1;
             end
             else
             begin
-                variable_product = raw_product;
-                variable_exponent = raw_exponent;
+                for (i = 0; i<21; i =i+1)begin
+                    if(variable_product[21] == 1'b0)begin
+                        variable_product = variable_product <<1;
+                        left_shifts = left_shifts +1;
+                    end
+                end
+
+                variable_exponent = raw_exponent - left_shifts +1;
             end
             normalization = { variable_exponent, variable_product};
         end 
@@ -106,9 +144,10 @@ module FP16_Multiply(
     wire [29:0] normalized_result;
 
     assign normalized_result = normalization(raw_product, raw_exponent);
-
+    
     assign normalized_exponent = normalized_result[29:22];
     assign normalized_product = normalized_result[21:0];
     assign product_sign = sign_a ^ sign_b;
+    assign product_class = product_class_type(classification_a,classification_b);
 
 endmodule
