@@ -9,13 +9,13 @@ module FP16_MAC(
         wire signed [7:0] normalized_exponent;
         wire [21:0] normalized_fraction;
         wire fraction_sign;
-        wire[1:0] product_class;
+        wire[2:0] product_class;
         wire [31:0] acc_feedback;
         assign acc= acc_feedback;
 
         FP16_Multiply U1(.a_fp16(a_fp16), .b_fp16(b_fp16), .normalized_exponent(normalized_exponent),.normalized_product(normalized_fraction),.product_sign(fraction_sign),.product_class(product_class));
 
 
-        FP16_ACC U2(.clk(clk), .rst(rst), .en(en), .normalized_exponent(normalized_exponent), .normalized_fraction(normalized_fraction),
+        FP32_ACC U2(.clk(clk), .rst(rst), .en(en), .normalized_exponent(normalized_exponent), .normalized_fraction(normalized_fraction),
                     .fraction_sign(fraction_sign), .acc_in_fp32(acc_feedback), .acc_out_fp32(acc_feedback),.product_class(product_class));
             endmodule

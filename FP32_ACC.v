@@ -59,26 +59,42 @@ module FP32_ACC(
     function [28:0] shift_right_sticky(input [28:0] value, input [8:0] shift_amount);
         reg [28:0] shifted_value;
         reg sticky_value;
-        integer i;
 
         begin
             shifted_value = 29'b0;
             sticky_value = 1'b0;
             
-            if(shift_amount == 0)begin
-                shifted_value = value;
-            end
-            else if(shift_amount >=9'd29)begin
+            if(|shift_amount[8:5])begin
                 shifted_value = 29'b0;
                 sticky_value = |value;
             end
             else begin
-                shifted_value = value >>shift_amount;
-
-                for(i = 0; i<29; i = i+1)begin
-                    if(i<shift_amount)
-                    sticky_value = sticky_value | value[i];
+                if (shift_amount[0])begin
+                    sticky_value = sticky_value | shifted_value[0];
+                    shifted_value = shifted_value >> 1;
+                    shifted_value[0] = shifted_value[0] | sticky_value;
                 end
+                if (shift_amount[1])begin
+                    sticky_value = sticky_value | shifted_value[1:0];
+                    shifted_value = shifted_value >> 2;
+                    shifted_value[0] = shifted_value[0] | sticky_value;
+                end
+                if (shift_amount[2])begin
+                    sticky_value = sticky_value | shifted_value[3:0];
+                    shifted_value = shifted_value >> 4;
+                    shifted_value[0] = shifted_value[0] | sticky_value;
+                end
+                if (shift_amount[3])begin
+                    sticky_value = sticky_value | shifted_value[7:0];
+                    shifted_value = shifted_value >> 8;
+                    shifted_value[0] = shifted_value[0] | sticky_value;
+                end
+                if (shift_amount[4])begin
+                    sticky_value = sticky_value | shifted_value[16:0];
+                    shifted_value = shifted_value >> 16;
+                    shifted_value[0] = shifted_value[0] | sticky_value;
+                end
+
             end
             shifted_value[0] = shifted_value[0] | sticky_value;
 
@@ -92,35 +108,91 @@ module FP32_ACC(
     wire [27:0] aligned_acc;
     wire signed [8:0] common_exponent;
 
-    assign aligned_fraction = (exponent_extended >=acc_actual_exponent)? 
-    fraction_extended: shift_right_sticky({1'b0,fraction_extended},(acc_actual_exponent- exponent_extended));
+    wire exponent_product_ge_acc;
+    wire [8:0] exponent_difference;
 
-    assign aligned_acc = (acc_actual_exponent >=exponent_extended)? 
-    acc_extended: shift_right_sticky({1'b0,acc_extended}, (exponent_extended-acc_actual_exponent));
+    reg [27:0] aligned_fraction_reg;
+    reg [27:0] aligned_acc_reg;
+    reg signed [8:0] common_exponent_reg;
+    
+    assign exponent_product_ge_acc =
+    (exponent_extended >= acc_actual_exponent);
 
-    assign common_exponent = (exponent_extended >= acc_actual_exponent)? exponent_extended: acc_actual_exponent;
+    assign exponent_difference =
+        exponent_product_ge_acc ?
+        (exponent_extended - acc_actual_exponent) :
+        (acc_actual_exponent - exponent_extended);
 
+    always @(*) begin
+        aligned_fraction_reg = fraction_extended;
+        aligned_acc_reg = acc_extended;
+
+        if (exponent_product_ge_acc) begin
+            common_exponent_reg = exponent_extended;
+
+            aligned_acc_reg =
+                shift_right_sticky(
+                    {1'b0, acc_extended},
+                    exponent_difference
+                );
+        end
+        else begin
+            common_exponent_reg = acc_actual_exponent;
+
+            aligned_fraction_reg =
+                shift_right_sticky(
+                    {1'b0, fraction_extended},
+                    exponent_difference
+                );
+        end
+    end
+
+    assign aligned_fraction = aligned_fraction_reg;
+    assign aligned_acc = aligned_acc_reg;
+    assign common_exponent = common_exponent_reg;
+
+ 
     //Addition or Subtraction
-    function [29:0] adder( input [27:0] fraction_significand, input fraction_sign, input [27:0] acc_significand, input acc_sign);
-        reg [28:0] result_sum;
-        reg result_sign;
-        begin
-            if(fraction_sign == acc_sign) begin
-                result_sum = {1'b0, fraction_significand} + {1'b0, acc_significand};
-                result_sign = fraction_sign;
-            end
-            else if(fraction_significand >= acc_significand) begin
-                result_sum = {1'b0, fraction_significand} - {1'b0, acc_significand};
+function [29:0] adder(
+    input [27:0] fraction_significand,
+    input fraction_sign,
+    input [27:0] acc_significand,
+    input acc_sign
+);
+
+    reg [28:0] result_sum;
+    reg result_sign;
+    reg [28:0] difference;
+
+    begin
+        result_sum  = 29'b0;
+        result_sign = 1'b0;
+        difference  = 29'b0;
+
+        if (fraction_sign == acc_sign) begin
+            result_sum = {1'b0, fraction_significand}
+                       + {1'b0, acc_significand};
+            result_sign = fraction_sign;
+        end
+        else begin
+            difference = {1'b0, fraction_significand}
+                       - {1'b0, acc_significand};
+
+            if (difference[28] == 1'b0) begin
+                result_sum  = difference;
                 result_sign = fraction_sign;
             end
             else begin
-                result_sum = {1'b0, acc_significand} - {1'b0, fraction_significand};
+                result_sum = {1'b0,
+                              (~difference[27:0] + 28'd1)};
                 result_sign = acc_sign;
             end
-        
-        adder = { result_sign, result_sum};
         end
-        endfunction
+
+        adder = {result_sign, result_sum};
+    end
+
+endfunction
 
     wire result_sign;
     wire [28:0] result_sum;
@@ -148,15 +220,38 @@ module FP32_ACC(
             end
             else
             begin
-                for (i =0; i<26; i=i+1)begin
-                    if(variable_fraction[26] == 1'b0)
-                    begin
-                        variable_fraction = variable_fraction<<1;
-                        variable_exponent = variable_exponent - 9'sd1;
-                    end
-            
+                
+                if(variable_fraction[26:11] == 16'b0)
+                begin
+                    variable_fraction = variable_fraction<<16;
+                    variable_exponent = variable_exponent - 9'sd16;
                 end
+
+                if(variable_fraction[26:19] == 8'b0)
+                begin
+                    variable_fraction = variable_fraction<<8;
+                    variable_exponent = variable_exponent - 9'sd8;
+                end
+
+                if(variable_fraction[26:23] == 4'b0)
+                begin
+                    variable_fraction = variable_fraction<<4;
+                    variable_exponent = variable_exponent - 9'sd4;
+                end
+
+                if(variable_fraction[26:25] == 2'b0)
+                begin
+                    variable_fraction = variable_fraction<<2;
+                    variable_exponent = variable_exponent - 9'sd2;
+                end
+                if(variable_fraction[26] == 1'b0)
+                begin
+                    variable_fraction = variable_fraction<<1;
+                    variable_exponent = variable_exponent - 9'sd1;
+                end
+            
             end
+            
 
             normalization_fp32 = { variable_exponent, variable_fraction};
         end 
